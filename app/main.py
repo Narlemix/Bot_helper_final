@@ -44,6 +44,7 @@ class Intent:
     keywords: list[str]
     examples: list[str]
     safe_answer: str
+    template: str = "generic"  # "dismissal" (structured fields) or "generic" (free-form request)
     references: list[str] = field(default_factory=list)
 
 
@@ -80,6 +81,7 @@ class Classifier:
                 keywords=item["keywords"],
                 examples=item["example_questions"],
                 safe_answer=item["safe_answer"],
+                template=item.get("template", "generic"),
             )
             intent.references = [*intent.keywords, *intent.examples]
             self.intents[key] = intent
@@ -193,7 +195,7 @@ class Bot:
             key, score, alternatives = self.classifier.classify(message)
             if not key:
                 return {
-                    "text": "Я пока не уверен, что правильно понял запрос. Попробуйте, например: «как оформить увольнение сотрудника?»",
+                    "text": "Я пока не уверен, что правильно понял запрос. Попробуйте, например: «как оформить увольнение сотрудника?» или «как заказать справку 2-НДФЛ?»",
                     "state": "new",
                     "confidence": round(score, 3),
                     "alternatives": [
@@ -216,8 +218,8 @@ class Bot:
             }
 
         if session.stage == "choose_action":
+            intent = self.classifier.intents[session.intent]
             if any(token in lower for token in ["информа", "узнать", "как", "что нужно", "документ"]):
-                intent = self.classifier.intents[session.intent or "admin_dismissal"]
                 session.stage = "new"
                 return {"text": intent.safe_answer, "state": "new", "intent": session.intent}
             if any(token in lower for token in ["оформ", "обращ", "отправ", "заявк"]):
@@ -230,9 +232,16 @@ class Bot:
             }
 
         if session.stage == "collect_full_name":
+            intent = self.classifier.intents[session.intent]
             session.full_name = message
-            session.stage = "collect_employee"
-            return {"text": "Теперь укажите ФИО сотрудника, которого нужно уволить.", "state": session.stage}
+            if intent.template == "dismissal":
+                session.stage = "collect_employee"
+                return {"text": "Теперь укажите ФИО сотрудника, которого нужно уволить.", "state": session.stage}
+            session.stage = "collect_comment"
+            return {
+                "text": "Опишите ваш запрос: что нужно сделать и какие есть известные детали (даты, номера документов, суммы и т.п.).",
+                "state": session.stage,
+            }
 
         if session.stage == "collect_employee":
             session.employee_name = message
@@ -250,7 +259,11 @@ class Bot:
             }
 
         if session.stage == "collect_comment":
-            session.comment = None if lower == "нет" else message
+            intent = self.classifier.intents[session.intent]
+            if intent.template == "dismissal":
+                session.comment = None if lower == "нет" else message
+            else:
+                session.comment = message
             session.stage = "confirm"
             session.email_body = self.build_email(session)
             return {
@@ -277,29 +290,29 @@ class Bot:
         return {"text": "Диалог сброшен. Чем могу помочь?", "state": "new"}
 
     def build_summary(self, session: Session) -> str:
-        intent = self.classifier.intents[session.intent or "admin_dismissal"]
-        return (
-            f"Проверьте данные перед отправкой ({intent.name}):\n\n"
-            f"Заявитель: {session.full_name}\n"
-            f"Сотрудник: {session.employee_name}\n"
-            f"Дата увольнения: {session.dismissal_date}\n"
-            f"Комментарий: {session.comment or '—'}\n\n"
-            "Отправить обращение в кадровую службу?"
-        )
+        intent = self.classifier.intents[session.intent]
+        lines = [f"Проверьте данные перед отправкой ({intent.name}):", "", f"Заявитель: {session.full_name}"]
+        if intent.template == "dismissal":
+            lines.append(f"Сотрудник: {session.employee_name}")
+            lines.append(f"Дата увольнения: {session.dismissal_date}")
+        lines.append(f"Комментарий: {session.comment or '—'}")
+        lines.append("")
+        lines.append("Отправить обращение в кадровую службу?")
+        return "\n".join(lines)
 
     def build_email(self, session: Session) -> str:
-        intent = self.classifier.intents[session.intent or "admin_dismissal"]
-        return (
-            f"Обращение по увольнению — {intent.name}\n\n"
-            f"Заявитель: {session.full_name}\n"
-            f"Увольняемый сотрудник: {session.employee_name}\n"
-            f"Планируемая дата увольнения: {session.dismissal_date}\n"
-            f"Комментарий: {session.comment or '—'}\n\n"
-            f"Маршрут: {intent.recipient}"
-        )
+        intent = self.classifier.intents[session.intent]
+        lines = [f"Обращение — {intent.name}", "", f"Заявитель: {session.full_name}"]
+        if intent.template == "dismissal":
+            lines.append(f"Увольняемый сотрудник: {session.employee_name}")
+            lines.append(f"Планируемая дата увольнения: {session.dismissal_date}")
+        lines.append(f"Комментарий: {session.comment or '—'}")
+        lines.append("")
+        lines.append(f"Маршрут: {intent.recipient}")
+        return "\n".join(lines)
 
     def send_email(self, session: Session) -> tuple[bool, str]:
-        intent = self.classifier.intents[session.intent or "admin_dismissal"]
+        intent = self.classifier.intents[session.intent]
         recipient = intent.recipient
         dry_run = os.getenv("DRY_RUN_EMAIL", "true").lower() in {"1", "true", "yes", "y", "да"}
         if dry_run:
@@ -316,7 +329,7 @@ class Bot:
         msg = EmailMessage()
         msg["From"] = sender
         msg["To"] = recipient
-        msg["Subject"] = "Обращение по увольнению"
+        msg["Subject"] = f"Обращение — {intent.name}"
         msg.set_content(session.email_body or self.build_email(session))
         try:
             with smtplib.SMTP(host, port, timeout=15) as smtp:
@@ -330,7 +343,7 @@ class Bot:
 
 classifier = Classifier(FAQ_PATH)
 bot = Bot(classifier)
-app = FastAPI(title="HR Helper — Увольнение", version="1.0.0")
+app = FastAPI(title="HR Helper — Обращения в кадровую и административную службу", version="2.0.0")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
