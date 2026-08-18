@@ -1,0 +1,9 @@
+services:
+  bot:
+    build: .
+    container_name: dismissal-web-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"

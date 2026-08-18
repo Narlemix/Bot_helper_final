@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>HR Helper — Увольнение</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main class="page">
+    <section class="chat-card">
+      <header class="chat-header">
+        <div>
+          <div class="eyebrow">HR HELPER</div>
+          <h1>Помощник по увольнению</h1>
+          <p>Сначала поймём запрос, затем при необходимости оформим обращение в кадровую службу.</p>
+        </div>
+        <button id="reset" class="ghost">Новый диалог</button>
+      </header>
+
+      <div id="messages" class="messages"></div>
+
+      <div id="suggestions" class="suggestions"></div>
+
+      <form id="chat-form" class="composer">
+        <div class="input-wrap">
+          <input id="message" autocomplete="off" placeholder="Напишите вопрос…" />
+          <div id="typeahead" class="typeahead" hidden></div>
+        </div>
+        <button type="submit">Отправить</button>
+      </form>
+      <div class="hint">Пример: «как оформить увальнение сотрудника?»</div>
+    </section>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>
