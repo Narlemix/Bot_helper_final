@@ -7,7 +7,7 @@ const resetBtn = document.getElementById('reset');
 
 let sessionId = localStorage.getItem('dismissal_session_id');
 
-// ---- Live typing suggestions (typeahead) ----
+// Подсказки при вводе (typeahead)
 let typeaheadItems = [];
 let typeaheadActive = -1;
 let typeaheadTimer = null;
@@ -34,7 +34,6 @@ function renderTypeahead(items) {
     btn.className = 'typeahead-item';
     btn.textContent = text;
     btn.onmousedown = (e) => {
-      // mousedown fires before input blur, so the click isn't lost
       e.preventDefault();
       chooseTypeahead(idx);
     };
@@ -65,7 +64,6 @@ async function fetchTypeahead(query) {
       signal: typeaheadAbort.signal
     });
     const data = await response.json();
-    // Ignore stale responses if the input has since changed/cleared.
     if (normalizeForCompare(input.value) === normalizeForCompare(query)) {
       renderTypeahead(data.suggestions || []);
     }
@@ -105,7 +103,6 @@ input.addEventListener('keydown', (e) => {
 });
 
 input.addEventListener('blur', () => {
-  // small delay so a click on a suggestion (mousedown) still registers
   setTimeout(hideTypeahead, 100);
 });
 

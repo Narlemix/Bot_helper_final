@@ -1,30 +1,21 @@
-"""FastAPI entrypoint. Wiring only — the actual logic lives in:
-
-    classifier.py  — free text -> request category (+ typeahead suggestions)
-    dialog.py       — the conversation state machine
-    mailer.py        — sending the finished request by email
-    models.py        — shared data structures
-    text_utils.py    — normalization / validators
-
-data/faq.json is the single source of truth for what categories exist, their
-keywords/examples, their recipient email, and the fields each one collects —
-see README.md → "Добавление нового сценария" to add one without touching code.
-"""
 from __future__ import annotations
 
 import logging
 import os
+import secrets
 import uuid
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import FileResponse
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .classifier import Classifier
 from .dialog import Bot
+from .log_buffer import get_recent as get_recent_logs
 from .logging_config import configure_logging
 
 load_dotenv()
@@ -34,8 +25,9 @@ logger = logging.getLogger("hrbot.main")
 BASE_DIR = Path(__file__).resolve().parent.parent
 FAQ_PATH = BASE_DIR / "data" / "faq.json"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+ADMIN_DIR = Path(__file__).resolve().parent / "admin"
 
-APP_VERSION = "3.1.0"  # bump this on every deploy — /api/health and the startup log line both show it
+APP_VERSION = "3.2.0"
 
 classifier = Classifier(FAQ_PATH)
 bot = Bot(classifier)
@@ -49,6 +41,23 @@ logger.info(
 
 app = FastAPI(title="HR Helper — Обращения в кадровую и административную службу", version=APP_VERSION)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+_basic_auth = HTTPBasic()
+
+
+def require_admin(credentials: HTTPBasicCredentials = Depends(_basic_auth)) -> None:
+    """Проверяет логин/пароль для /admin/logs и /api/admin/logs (Basic Auth)."""
+    admin_user = os.getenv("ADMIN_USER")
+    admin_password = os.getenv("ADMIN_PASSWORD")
+    if not admin_user or not admin_password:
+        raise HTTPException(
+            status_code=503,
+            detail="Страница логов не настроена: задайте ADMIN_USER и ADMIN_PASSWORD в .env",
+        )
+    user_ok = secrets.compare_digest(credentials.username, admin_user)
+    pass_ok = secrets.compare_digest(credentials.password, admin_password)
+    if not (user_ok and pass_ok):
+        raise HTTPException(status_code=401, detail="Неверный логин или пароль", headers={"WWW-Authenticate": "Basic"})
 
 
 class ChatRequest(BaseModel):
@@ -73,11 +82,7 @@ def health() -> dict:
 
 @app.get("/api/intents")
 def list_intents() -> dict:
-    """Lists every configured request category and its routing address.
-
-    Handy for confirming what's actually deployed (e.g. after a redeploy)
-    without needing to open faq.json on the server.
-    """
+    """Возвращает список всех тем обращений с адресами получателей."""
     return {
         "intents": [
             {"key": key, "name": intent.name, "recipient": intent.recipient, "field_count": len(intent.fields)}
@@ -97,3 +102,13 @@ def chat(payload: ChatRequest) -> dict:
     result = bot.reply(session_id, payload.message)
     result["session_id"] = session_id
     return result
+
+
+@app.get("/admin/logs")
+def admin_logs_page(_: None = Depends(require_admin)) -> FileResponse:
+    return FileResponse(str(ADMIN_DIR / "logs.html"))
+
+
+@app.get("/api/admin/logs")
+def admin_logs_api(_: None = Depends(require_admin)) -> dict:
+    return {"logs": get_recent_logs()}

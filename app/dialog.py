@@ -1,17 +1,3 @@
-"""The conversation itself: a small explicit state machine, one stage per turn.
-
-Deliberately NOT written as 17 near-identical if/elif branches (one per category)
-— that's exactly the kind of code that made the previous single-file version look
-smaller than the actual functionality it needed to cover, and it rots the moment a
-18th category is added. Instead, every category (`Intent`) declares *what data it
-needs* (`Intent.fields`, defined per-category in data/faq.json) and this module
-provides one generic engine that walks through those fields for whichever intent
-was classified. Adding a category is a data change in faq.json, not a code change
-here — see `README.md` → "Добавление нового сценария".
-
-Stages, in order for a full "submit a request" conversation:
-    new -> (disambiguate)? -> choose_action -> collecting (N fields) -> confirm -> new
-"""
 from __future__ import annotations
 
 import logging
@@ -25,9 +11,7 @@ from .text_utils import is_skip, normalize, validate_date, validate_money, valid
 
 logger = logging.getLogger("hrbot.dialog")
 
-# How the engine augments each intent's own fields: every request starts with
-# "who is asking" and ends with an optional free-text comment, so individual
-# intents in faq.json only need to declare the fields specific to that category.
+# Эти поля добавляются автоматически к полям любой темы: заявитель — в начале, комментарий — в конце.
 _LEADING_FIELDS = [
     Field(key="full_name", label="Ваше ФИО — это заявитель обращения.", title="ФИО заявителя", kind="text", required=True)
 ]
@@ -48,7 +32,7 @@ _SUBMIT_HINTS = ("оформ", "обращ", "отправ", "заявк", "со
 
 
 def build_fields(intent: Intent) -> list[Field]:
-    """The full ordered list of questions for this intent: name -> category-specific -> comment."""
+    """Полный список полей темы: заявитель -> поля темы -> комментарий."""
     return [*_LEADING_FIELDS, *intent.fields, *_TRAILING_FIELDS]
 
 
@@ -58,6 +42,7 @@ class Bot:
         self.sessions: dict[str, Session] = {}
 
     def get_session(self, session_id: str) -> Session:
+        """Возвращает сессию по id, создавая новую при первом обращении."""
         session = self.sessions.get(session_id)
         if session is None:
             session = Session(session_id=session_id)
@@ -65,6 +50,7 @@ class Bot:
         return session
 
     def reply(self, session_id: str, message: str) -> dict:
+        """Обрабатывает одно сообщение пользователя согласно текущей стадии диалога."""
         session = self.get_session(session_id)
         message = (message or "").strip()
         if not message:
@@ -83,14 +69,14 @@ class Bot:
         if session.stage == "confirm":
             return self._handle_confirm(session, lower)
 
-        # Defensive fallback: unknown stage somehow ended up on the session.
         session.stage = "new"
         return self._handle_new(session, message, lower)
 
     # ------------------------------------------------------------------ #
-    # Stage handlers
+    # Обработчики стадий
     # ------------------------------------------------------------------ #
     def _handle_new(self, session: Session, message: str, lower: str) -> dict:
+        """Стадия «new»: классифицирует свободный запрос и решает, что делать дальше."""
         best_key, score, ranked = self.classifier.classify(message)
 
         if best_key is None and (not ranked or ranked[0][1] < 0.30):
@@ -104,7 +90,6 @@ class Bot:
             }
 
         if best_key is None:
-            # Ambiguous: top candidates are close enough that guessing would be unreliable.
             top = ranked[:2]
             session.candidates = [key for key, _ in top]
             session.stage = "disambiguate"
@@ -132,6 +117,7 @@ class Bot:
         }
 
     def _handle_disambiguate(self, session: Session, message: str, lower: str) -> dict:
+        """Стадия «disambiguate»: ждёт выбора между предложенными темами."""
         offered = list(session.candidates)
         for key in session.candidates:
             intent_name_norm = normalize(self.classifier.intents[key].name)
@@ -153,11 +139,6 @@ class Bot:
                     "intent": key,
                     "options": ["Получить информацию", "Оформить обращение"],
                 }
-        # Didn't match either offered option. Only treat this as a brand-new
-        # query if it's a *confident* classification on its own — otherwise a
-        # short leftover reply (e.g. "оформить", typed out of habit) would
-        # silently reclassify into an unrelated category instead of the user
-        # actually picking one of the two options they were just given.
         fresh_key, fresh_score, _ = self.classifier.classify(message)
         if fresh_key is not None and fresh_score >= 0.5:
             session.candidates = []
@@ -171,6 +152,7 @@ class Bot:
         }
 
     def _handle_choose_action(self, session: Session, lower: str) -> dict:
+        """Стадия «choose_action»: получить информацию или оформить обращение."""
         intent = self.classifier.intents[session.intent]
         if any(hint in lower for hint in _INFO_HINTS):
             session.stage = "new"
@@ -189,6 +171,7 @@ class Bot:
         }
 
     def _handle_collecting(self, session: Session, message: str, lower: str) -> dict:
+        """Стадия «collecting»: последовательно собирает и валидирует поля темы."""
         intent = self.classifier.intents[session.intent]
         fields = build_fields(intent)
         current = fields[session.field_cursor]
@@ -220,6 +203,7 @@ class Bot:
         }
 
     def _handle_confirm(self, session: Session, lower: str) -> dict:
+        """Стадия «confirm»: подтверждение и фактическая отправка письма."""
         if lower in _YES_WORDS or any(w in lower for w in ("отправ", "подтвер")):
             intent = self.classifier.intents[session.intent]
             logger.info(
@@ -248,10 +232,11 @@ class Bot:
         }
 
     # ------------------------------------------------------------------ #
-    # Helpers
+    # Вспомогательные методы
     # ------------------------------------------------------------------ #
     @staticmethod
     def _validate_field(field_: Field, message: str) -> str | None:
+        """Валидирует ответ пользователя по типу поля (text/date/money)."""
         if field_.kind == "date":
             return validate_date(message)
         if field_.kind == "money":
@@ -260,6 +245,7 @@ class Bot:
 
     @staticmethod
     def _retry_prompt(field_: Field) -> str:
+        """Формирует текст повторного вопроса при неверном формате ответа."""
         if field_.kind == "date":
             return "Дата не распознана. Укажите её в формате ДД.ММ.ГГГГ, например 31.08.2026."
         if field_.kind == "money":
@@ -267,6 +253,7 @@ class Bot:
         return field_.label
 
     def _reset(self, session: Session) -> None:
+        """Сбрасывает сессию к началу диалога."""
         session.intent = None
         session.stage = "new"
         session.field_cursor = 0
@@ -275,12 +262,13 @@ class Bot:
         session.email_body = None
 
     def _sample_examples(self) -> str:
-        # Two short, varied example questions so the hint doesn't always look identical.
+        """Возвращает пару примеров вопросов для подсказки при непонятном запросе."""
         pool = [ex for intent in self.classifier.intents.values() for ex in intent.examples[:1]]
         picks = pool[:2] if len(pool) >= 2 else pool
         return " / ".join(f"«{p}»" for p in picks) or "«как оформить увольнение сотрудника?»"
 
     def build_summary(self, session: Session) -> str:
+        """Формирует текст сводки для подтверждения перед отправкой."""
         intent = self.classifier.intents[session.intent]
         fields = build_fields(intent)
         lines = [f"Проверьте данные перед отправкой ({intent.name}):", ""]
@@ -292,6 +280,7 @@ class Bot:
         return "\n".join(lines)
 
     def build_email(self, session: Session) -> str:
+        """Формирует текст письма из собранных данных сессии."""
         intent = self.classifier.intents[session.intent]
         fields = build_fields(intent)
         lines = [f"Обращение — {intent.name}", ""]

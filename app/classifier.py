@@ -1,20 +1,3 @@
-"""Turns a free-form Russian message into a request category (an `Intent`).
-
-Two complementary signals are combined, because either one alone is fragile on
-short, informal, occasionally misspelled input like real chat messages:
-
-- **TF-IDF over character 3–5 grams + cosine similarity.** Robust to typos and
-  word endings/case (Russian is heavily inflected) because it compares
-  overlapping substrings rather than whole words — "вахтовика" and "вахтовик"
-  share almost all their trigrams even though they're different tokens.
-- **rapidfuzz.WRatio**, a word-level fuzzy ratio. Robust to word order and to
-  a query being a short fragment of a longer reference phrase (partial-ratio
-  component), which char-ngrams alone under-score.
-
-The same machinery (`self.suggestion_pool`, `normalize`) also powers the
-`/api/suggest` typeahead endpoint, so the "did you mean" behavior in chat and
-the live dropdown while typing are always in sync with the same phrase list.
-"""
 from __future__ import annotations
 
 import json
@@ -31,40 +14,20 @@ from .text_utils import normalize
 
 logger = logging.getLogger("hrbot.classifier")
 
-# Below this combined score, the bot admits it didn't understand rather than
-# guessing at a category.
+# Ниже этого порога бот считает, что не понял запрос.
 NO_MATCH_THRESHOLD = 0.30
 
-# If the best and second-best intents are within this margin of each other
-# (and the best isn't confident on its own), ask a disambiguating question
-# instead of silently picking one. Keeping the ceiling relatively low (rather
-# than e.g. 0.85) matters: with 17 categories sharing a lot of common HR/admin
-# vocabulary, a "close second" is normal even when the top pick is clearly
-# right — disambiguation should kick in for genuinely low-confidence calls,
-# not every time two categories happen to share a few words.
+# Если разрыв между лучшим и вторым вариантом меньше этого значения — переспрашиваем.
 AMBIGUITY_MARGIN = 0.06
 AMBIGUITY_CEILING = 0.60
 
-# Weights for combining the two similarity signals into one score.
+# Веса при объединении двух сигналов схожести.
 COSINE_WEIGHT = 0.45
 FUZZY_WEIGHT = 0.55
 
-# Some intent pairs are *near-duplicates by design* — e.g. "увольнение офиса"
-# and "увольнение вахтовика" share almost identical wording and differ mainly
-# in whether the employee is a вахтовик. On a query that doesn't lean toward
-# either side ("уволить сотрудника"), both score high AND close together,
-# which normally would trigger the ambiguity check above — but
-# AMBIGUITY_CEILING intentionally lets high-confidence top picks through
-# without a second look (see the comment above it), and both members of a
-# pair like this *are* high-confidence on their own, just for the wrong
-# reason. So: for each listed group, if the query contains none of either
-# side's disambiguating words, force a clarifying question regardless of how
-# high the scores are — the ceiling doesn't get a vote for these specific
-# pairs. If the query *does* contain one side's word (e.g. "офиса" or
-# "вахтовика"), it already disambiguates itself and normal scoring proceeds.
-#
-# (group of intent keys, {intent_key: [substrings that mean "this one, no
-#  need to ask"] for each member that has such a word})
+# Пары тем-«близнецов»: похожи почти дословно, различаются одним словом.
+# Если в запросе нет ни одного отличительного слова — всегда переспрашиваем,
+# какой вариант нужен, независимо от итоговых баллов.
 CONFUSABLE_GROUPS: list[tuple[frozenset[str], dict[str, list[str]]]] = [
     (
         frozenset({"admin_dismissal", "vahta_dismissal"}),
@@ -87,11 +50,6 @@ class Classifier:
         seen_suggestions: set[str] = set()
 
         for key, item in raw.items():
-            # Per-intent recipient override, e.g. RECIPIENT_EMAIL_ADMIN_CLAIMS=...
-            # Falls back to the address defined in faq.json. There is deliberately
-            # no *global* RECIPIENT_EMAIL override anymore: with 17 categories
-            # routing to different inboxes, a single global override would send
-            # everything to one address and silently break routing.
             env_override = os.getenv(f"RECIPIENT_EMAIL_{key.upper()}")
             fields = [
                 Field(
@@ -130,10 +88,10 @@ class Classifier:
         self.suggestion_pool = suggestion_pool
 
     # ------------------------------------------------------------------ #
-    # Classification
+    # Классификация
     # ------------------------------------------------------------------ #
     def _scores_per_intent(self, query_norm: str) -> dict[str, float]:
-        """Combined cosine+fuzzy score for every intent, keyed by intent key."""
+        """Считает совмещённый (cosine + fuzzy) балл для каждой темы."""
         query_vec = self.vectorizer.transform([query_norm])
         cosine_scores = cosine_similarity(query_vec, self.matrix)[0]
 
@@ -152,13 +110,8 @@ class Classifier:
                     best = ratio
             best_fuzzy[key] = best
 
-        # WRatio leans on partial-ratio (substring containment), which inflates
-        # scores for very short queries: a single common word like "документы"
-        # sits inside almost every reference phrase and would otherwise score
-        # ~0.75+ against nearly all 17 intents simultaneously. Discount the
-        # fuzzy signal for short queries so a bare word doesn't out-rank the
-        # ambiguity ceiling and get committed to a single category by accident —
-        # it should instead fall through to "ask for clarification".
+        # Короткие запросы дисконтируем: иначе одно общее слово ложно
+        # набирает высокий балл почти у всех тем сразу.
         length_confidence = min(1.0, len(query_norm) / 14.0)
         best_fuzzy = {key: score * length_confidence for key, score in best_fuzzy.items()}
 
@@ -168,20 +121,7 @@ class Classifier:
         return combined
 
     def classify(self, text: str) -> tuple[str | None, float, list[tuple[str, float]]]:
-        """Classify a free-form message.
-
-        Returns `(best_key_or_None, best_score, ranked_alternatives)`.
-        `ranked_alternatives` is every intent sorted by score, descending —
-        callers use the top 2-3 to build a "did you mean X or Y?" prompt when
-        the match is ambiguous.
-
-        Every outcome is logged at INFO under "hrbot.classifier" — including
-        the recipient email address the request would route to — specifically
-        so routing decisions can be watched live in the hosting provider's log
-        viewer (Railway "Logs" tab, `docker compose logs -f`, etc.) without
-        needing access to the code or a debugger. See README.md → "Логи
-        маршрутизации".
-        """
+        """Определяет тему свободного запроса; логирует решение в hrbot.classifier."""
         query_norm = normalize(text)
         if not query_norm:
             return None, 0.0, []
@@ -202,10 +142,7 @@ class Classifier:
             if best_key not in group:
                 continue
             if any(word in query_norm for words in disambiguators.values() for word in words):
-                continue  # the query already leans toward one side — trust normal scoring
-            # Neither side's word is present, so no matter how skewed the score
-            # happens to be (due to incidental wording overlap), we genuinely
-            # can't tell which one the person means — ask, don't guess.
+                continue
             group_ranked = [(key, score) for key, score in ranked if key in group]
             g_key, g_score = group_ranked[0]
             g2_key, g2_score = group_ranked[1]
@@ -232,16 +169,10 @@ class Classifier:
         return best_key, best_score, ranked
 
     # ------------------------------------------------------------------ #
-    # Typeahead
+    # Подсказки при вводе
     # ------------------------------------------------------------------ #
     def suggest(self, query: str, limit: int = 6) -> list[str]:
-        """Typeahead suggestions for the search box, tolerant of typos.
-
-        Combines a rapidfuzz similarity score with a prefix/word-start bonus so
-        that partial words (e.g. "оформ") surface phrases that start with a
-        matching word (e.g. "оформление увольнения вахтовика") even before the
-        fuzzy score alone would rank them highly.
-        """
+        """Возвращает до `limit` подсказок для поля ввода, устойчиво к опечаткам."""
         q = normalize(query)
         if len(q) < 2:
             return []
