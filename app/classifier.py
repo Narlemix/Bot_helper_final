@@ -18,6 +18,7 @@ the live dropdown while typing are always in sync with the same phrase list.
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
 
@@ -27,6 +28,8 @@ from sklearn.metrics.pairwise import cosine_similarity
 
 from .models import Field, Intent
 from .text_utils import normalize
+
+logger = logging.getLogger("hrbot.classifier")
 
 # Below this combined score, the bot admits it didn't understand rather than
 # guessing at a category.
@@ -45,6 +48,32 @@ AMBIGUITY_CEILING = 0.60
 # Weights for combining the two similarity signals into one score.
 COSINE_WEIGHT = 0.45
 FUZZY_WEIGHT = 0.55
+
+# Some intent pairs are *near-duplicates by design* — e.g. "увольнение офиса"
+# and "увольнение вахтовика" share almost identical wording and differ mainly
+# in whether the employee is a вахтовик. On a query that doesn't lean toward
+# either side ("уволить сотрудника"), both score high AND close together,
+# which normally would trigger the ambiguity check above — but
+# AMBIGUITY_CEILING intentionally lets high-confidence top picks through
+# without a second look (see the comment above it), and both members of a
+# pair like this *are* high-confidence on their own, just for the wrong
+# reason. So: for each listed group, if the query contains none of either
+# side's disambiguating words, force a clarifying question regardless of how
+# high the scores are — the ceiling doesn't get a vote for these specific
+# pairs. If the query *does* contain one side's word (e.g. "офиса" or
+# "вахтовика"), it already disambiguates itself and normal scoring proceeds.
+#
+# (group of intent keys, {intent_key: [substrings that mean "this one, no
+#  need to ask"] for each member that has such a word})
+CONFUSABLE_GROUPS: list[tuple[frozenset[str], dict[str, list[str]]]] = [
+    (
+        frozenset({"admin_dismissal", "vahta_dismissal"}),
+        {
+            "vahta_dismissal": ["вахт"],
+            "admin_dismissal": ["офис", "администр"],
+        },
+    ),
+]
 
 
 class Classifier:
@@ -145,6 +174,13 @@ class Classifier:
         `ranked_alternatives` is every intent sorted by score, descending —
         callers use the top 2-3 to build a "did you mean X or Y?" prompt when
         the match is ambiguous.
+
+        Every outcome is logged at INFO under "hrbot.classifier" — including
+        the recipient email address the request would route to — specifically
+        so routing decisions can be watched live in the hosting provider's log
+        viewer (Railway "Logs" tab, `docker compose logs -f`, etc.) without
+        needing access to the code or a debugger. See README.md → "Логи
+        маршрутизации".
         """
         query_norm = normalize(text)
         if not query_norm:
@@ -155,16 +191,44 @@ class Classifier:
         if not ranked:
             return None, 0.0, []
 
+        top3 = ", ".join(f"{key}={score:.2f}" for key, score in ranked[:3])
         best_key, best_score = ranked[0]
+
         if best_score < NO_MATCH_THRESHOLD:
+            logger.info("route: query=%r -> NO_MATCH (top3: %s)", text.strip(), top3)
+            return None, best_score, ranked
+
+        for group, disambiguators in CONFUSABLE_GROUPS:
+            if best_key not in group:
+                continue
+            if any(word in query_norm for words in disambiguators.values() for word in words):
+                continue  # the query already leans toward one side — trust normal scoring
+            # Neither side's word is present, so no matter how skewed the score
+            # happens to be (due to incidental wording overlap), we genuinely
+            # can't tell which one the person means — ask, don't guess.
+            group_ranked = [(key, score) for key, score in ranked if key in group]
+            g_key, g_score = group_ranked[0]
+            g2_key, g2_score = group_ranked[1]
+            logger.info(
+                "route: query=%r -> AMBIGUOUS (confusable pair, no disambiguating word) between %s(%.2f) and %s(%.2f) (top3: %s)",
+                text.strip(), g_key, g_score, g2_key, g2_score, top3,
+            )
             return None, best_score, ranked
 
         if len(ranked) > 1:
-            _, second_score = ranked[1]
+            second_key, second_score = ranked[1]
             if best_score < AMBIGUITY_CEILING and (best_score - second_score) < AMBIGUITY_MARGIN:
-                # Ambiguous: caller decides how to prompt using `ranked`.
+                logger.info(
+                    "route: query=%r -> AMBIGUOUS between %s(%.2f) and %s(%.2f) (top3: %s)",
+                    text.strip(), best_key, best_score, second_key, second_score, top3,
+                )
                 return None, best_score, ranked
 
+        intent = self.intents[best_key]
+        logger.info(
+            "route: query=%r -> intent=%s recipient=%s score=%.2f (top3: %s)",
+            text.strip(), best_key, intent.recipient, best_score, top3,
+        )
         return best_key, best_score, ranked
 
     # ------------------------------------------------------------------ #

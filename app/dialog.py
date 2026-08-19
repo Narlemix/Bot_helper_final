@@ -14,12 +14,16 @@ Stages, in order for a full "submit a request" conversation:
 """
 from __future__ import annotations
 
+import logging
+
 from rapidfuzz import fuzz
 
 from .classifier import Classifier
 from .mailer import send_email
 from .models import Field, Intent, Session
 from .text_utils import is_skip, normalize, validate_date, validate_money, validate_text
+
+logger = logging.getLogger("hrbot.dialog")
 
 # How the engine augments each intent's own fields: every request starts with
 # "who is asking" and ends with an optional free-text comment, so individual
@@ -128,6 +132,7 @@ class Bot:
         }
 
     def _handle_disambiguate(self, session: Session, message: str, lower: str) -> dict:
+        offered = list(session.candidates)
         for key in session.candidates:
             intent_name_norm = normalize(self.classifier.intents[key].name)
             if intent_name_norm in lower or fuzz.WRatio(lower, intent_name_norm) >= 70:
@@ -135,6 +140,10 @@ class Bot:
                 session.stage = "choose_action"
                 session.candidates = []
                 intent = self.classifier.intents[key]
+                logger.info(
+                    "route: disambiguation resolved -> intent=%s recipient=%s (offered %s)",
+                    key, intent.recipient, offered,
+                )
                 return {
                     "text": (
                         f"Хорошо, «{intent.name}». "
@@ -213,7 +222,15 @@ class Bot:
     def _handle_confirm(self, session: Session, lower: str) -> dict:
         if lower in _YES_WORDS or any(w in lower for w in ("отправ", "подтвер")):
             intent = self.classifier.intents[session.intent]
+            logger.info(
+                "send: session=%s intent=%s recipient=%s (about to dispatch)",
+                session.session_id, intent.key, intent.recipient,
+            )
             ok, info = send_email(intent, session.email_body or self.build_email(session))
+            logger.info(
+                "send: session=%s intent=%s recipient=%s ok=%s info=%s",
+                session.session_id, intent.key, intent.recipient, ok, info,
+            )
             self._reset(session)
             if ok:
                 return {"text": f"Готово! Обращение отправлено на {info}.", "state": "new"}

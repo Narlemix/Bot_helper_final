@@ -12,6 +12,8 @@ see README.md → "Добавление нового сценария" to add on
 """
 from __future__ import annotations
 
+import logging
+import os
 import uuid
 from pathlib import Path
 
@@ -23,17 +25,27 @@ from pydantic import BaseModel
 
 from .classifier import Classifier
 from .dialog import Bot
+from .logging_config import configure_logging
 
 load_dotenv()
+configure_logging()
+logger = logging.getLogger("hrbot.main")
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 FAQ_PATH = BASE_DIR / "data" / "faq.json"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
-APP_VERSION = "3.0.0"  # bump this when deploying, so /api/health lets you confirm a new build actually landed
+APP_VERSION = "3.1.0"  # bump this on every deploy — /api/health and the startup log line both show it
 
 classifier = Classifier(FAQ_PATH)
 bot = Bot(classifier)
+
+logger.info(
+    "hrbot starting: version=%s intents=%d dry_run_email=%s",
+    APP_VERSION,
+    len(classifier.intents),
+    os.getenv("DRY_RUN_EMAIL", "true"),
+)
 
 app = FastAPI(title="HR Helper — Обращения в кадровую и административную службу", version=APP_VERSION)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
@@ -51,8 +63,6 @@ def index() -> FileResponse:
 
 @app.get("/api/health")
 def health() -> dict:
-    import os
-
     return {
         "status": "ok",
         "app_version": APP_VERSION,
