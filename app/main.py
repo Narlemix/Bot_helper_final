@@ -25,9 +25,8 @@ logger = logging.getLogger("hrbot.main")
 BASE_DIR = Path(__file__).resolve().parent.parent
 FAQ_PATH = BASE_DIR / "data" / "faq.json"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
-ADMIN_DIR = Path(__file__).resolve().parent / "admin"
 
-APP_VERSION = "3.2.0"
+APP_VERSION = "3.3.0"
 
 classifier = Classifier(FAQ_PATH)
 bot = Bot(classifier)
@@ -46,13 +45,13 @@ _basic_auth = HTTPBasic()
 
 
 def require_admin(credentials: HTTPBasicCredentials = Depends(_basic_auth)) -> None:
-    """Проверяет логин/пароль для /admin/logs и /api/admin/logs (Basic Auth)."""
+    """Проверяет логин/пароль для /api/admin/logs (Basic Auth)."""
     admin_user = os.getenv("ADMIN_USER")
     admin_password = os.getenv("ADMIN_PASSWORD")
     if not admin_user or not admin_password:
         raise HTTPException(
             status_code=503,
-            detail="Страница логов не настроена: задайте ADMIN_USER и ADMIN_PASSWORD в .env",
+            detail="Логи не настроены: задайте ADMIN_USER и ADMIN_PASSWORD в .env",
         )
     user_ok = secrets.compare_digest(credentials.username, admin_user)
     pass_ok = secrets.compare_digest(credentials.password, admin_password)
@@ -63,6 +62,10 @@ def require_admin(credentials: HTTPBasicCredentials = Depends(_basic_auth)) -> N
 class ChatRequest(BaseModel):
     session_id: str | None = None
     message: str
+
+
+class ResetRequest(BaseModel):
+    session_id: str | None = None
 
 
 @app.get("/")
@@ -104,9 +107,12 @@ def chat(payload: ChatRequest) -> dict:
     return result
 
 
-@app.get("/admin/logs")
-def admin_logs_page(_: None = Depends(require_admin)) -> FileResponse:
-    return FileResponse(str(ADMIN_DIR / "logs.html"))
+@app.post("/api/reset")
+def reset(payload: ResetRequest) -> dict:
+    """Завершает текущую сессию диалога и выдаёт новый session_id."""
+    if payload.session_id:
+        bot.sessions.pop(payload.session_id, None)
+    return {"session_id": str(uuid.uuid4())}
 
 
 @app.get("/api/admin/logs")

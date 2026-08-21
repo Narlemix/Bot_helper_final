@@ -25,4 +25,33 @@ h1 { margin: 8px 0 6px; font-size: clamp(24px, 4vw, 34px); }
 .typeahead-item { display: block; width: 100%; text-align: left; padding: 10px 14px; border: 0; background: #fff; cursor: pointer; font-size: 14px; color: #1d2733; border-bottom: 1px solid #f0f2f5; }
 .typeahead-item:last-child { border-bottom: 0; }
 .typeahead-item:hover, .typeahead-item.active { background: #f1f3f6; }
-@media (max-width: 640px) { .page { padding: 0; } .chat-card { min-height: 100vh; border-radius: 0; border: 0; } .chat-header { padding: 20px; } .messages { padding: 20px; } .message { max-width: 88%; } .suggestions { padding: 0 20px 14px; } }
+
+.tabs { display: flex; gap: 4px; padding: 0 30px; border-bottom: 1px solid #e8ebef; }
+.tab-btn { padding: 14px 6px; border: 0; background: transparent; cursor: pointer; font-size: 14px; font-weight: 600; color: #8a93a0; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.tab-btn:hover { color: #4a5460; }
+.tab-btn.active { color: #1d2733; border-bottom-color: #1d2733; }
+.tab-view[hidden] { display: none; }
+
+.logs-controls { display: flex; align-items: center; gap: 10px; padding: 16px 30px; border-bottom: 1px solid #e8ebef; flex-wrap: wrap; }
+.logs-controls input[type=text] { flex: 1; min-width: 200px; height: 38px; border: 1px solid #d8dee6; border-radius: 10px; padding: 0 12px; font-size: 14px; outline: none; }
+.logs-controls input[type=text]:focus { border-color: #8b98a7; }
+.logs-controls label { display: flex; align-items: center; gap: 6px; font-size: 13px; color: #4a5460; white-space: nowrap; }
+.logs-controls button { height: 38px; padding: 0 14px; border: 1px solid #d7dde4; background: #fff; border-radius: 10px; cursor: pointer; font-size: 13px; font-weight: 600; color: #1d2733; }
+.logs-controls button:hover { background: #f6f7f9; }
+.logs-status { font-size: 12px; color: #8a93a0; white-space: nowrap; }
+.log-list { flex: 1; min-height: 420px; max-height: 70vh; overflow-y: auto; }
+.log-row { display: flex; gap: 12px; padding: 10px 30px; border-bottom: 1px solid #f0f2f5; font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; font-size: 13px; align-items: flex-start; }
+.log-row:hover { background: #fafbfc; }
+.log-ts { color: #8a93a0; white-space: nowrap; flex-shrink: 0; }
+.log-badge { flex-shrink: 0; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; letter-spacing: .02em; white-space: nowrap; height: fit-content; }
+.badge-route { background: #e7f0ff; color: #1d4ed8; }
+.badge-send-ok { background: #e6f7ee; color: #0f7a3d; }
+.badge-send-fail { background: #fdeaea; color: #b3261e; }
+.badge-ambiguous { background: #fff4e0; color: #9a5b00; }
+.badge-other { background: #eef0f3; color: #5b6472; }
+.log-logger { color: #8a93a0; white-space: nowrap; flex-shrink: 0; }
+.log-msg { color: #18202a; word-break: break-word; white-space: pre-wrap; }
+.logs-footnote { padding: 14px 30px; font-size: 12px; color: #9099a4; border-top: 1px solid #e8ebef; }
+.empty { padding: 60px 28px; text-align: center; color: #8a93a0; }
+
+@media (max-width: 640px) { .page { padding: 0; } .chat-card { min-height: 100vh; border-radius: 0; border: 0; } .chat-header { padding: 20px; } .messages { padding: 20px; } .message { max-width: 88%; } .suggestions { padding: 0 20px 14px; } .tabs { padding: 0 20px; } .logs-controls { padding: 12px 20px; } .log-row { padding: 10px 20px; } .logs-footnote { padding: 12px 20px; } }

@@ -18,18 +18,38 @@
         <button id="reset" class="ghost">Новый диалог</button>
       </header>
 
-      <div id="messages" class="messages"></div>
+      <nav class="tabs">
+        <button type="button" class="tab-btn active" data-tab="chat">Чат</button>
+        <button type="button" class="tab-btn" data-tab="logs">Логи маршрутизации</button>
+      </nav>
 
-      <div id="suggestions" class="suggestions"></div>
+      <div id="chat-view" class="tab-view">
+        <div id="messages" class="messages"></div>
 
-      <form id="chat-form" class="composer">
-        <div class="input-wrap">
-          <input id="message" autocomplete="off" placeholder="Напишите вопрос…" />
-          <div id="typeahead" class="typeahead" hidden></div>
+        <div id="suggestions" class="suggestions"></div>
+
+        <form id="chat-form" class="composer">
+          <div class="input-wrap">
+            <input id="message" autocomplete="off" placeholder="Напишите вопрос…" />
+            <div id="typeahead" class="typeahead" hidden></div>
+          </div>
+          <button type="submit">Отправить</button>
+        </form>
+        <div class="hint">Пример: «как оформить увальнение сотрудника?», «уволить вахтовика», «заказать справку 2-НДФЛ»</div>
+      </div>
+
+      <div id="logs-view" class="tab-view" hidden>
+        <div class="logs-controls">
+          <input type="text" id="logs-filter" placeholder="Фильтр (например: AMBIGUOUS, vahta_dismissal, send:)" />
+          <label><input type="checkbox" id="logs-autorefresh" checked /> Автообновление</label>
+          <button type="button" id="logs-refresh">Обновить</button>
+          <span class="logs-status" id="logs-status">—</span>
         </div>
-        <button type="submit">Отправить</button>
-      </form>
-      <div class="hint">Пример: «как оформить увальнение сотрудника?», «уволить вахтовика», «заказать справку 2-НДФЛ»</div>
+        <div class="log-list" id="logs-list">
+          <div class="empty">Загрузка…</div>
+        </div>
+        <div class="logs-footnote">route: — решение классификатора. send: — фактическая отправка письма. Содержимое заполненных полей (ФИО, суммы, даты) сюда не попадает — только факт маршрутизации. Доступ защищён логином/паролем; браузер спросит его один раз.</div>
+      </div>
     </section>
   </main>
   <script src="/static/app.js"></script>

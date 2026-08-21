@@ -7,6 +7,101 @@ const resetBtn = document.getElementById('reset');
 
 let sessionId = localStorage.getItem('dismissal_session_id');
 
+// Переключение вкладок «Чат» / «Логи маршрутизации»
+const tabButtons = document.querySelectorAll('.tab-btn');
+const chatView = document.getElementById('chat-view');
+const logsView = document.getElementById('logs-view');
+
+tabButtons.forEach(btn => {
+  btn.addEventListener('click', () => {
+    tabButtons.forEach(b => b.classList.toggle('active', b === btn));
+    const tab = btn.dataset.tab;
+    chatView.hidden = tab !== 'chat';
+    logsView.hidden = tab !== 'logs';
+    resetBtn.hidden = tab !== 'chat';
+    if (tab === 'logs') {
+      loadLogs();
+      scheduleLogsAutorefresh();
+    } else {
+      clearInterval(logsTimer);
+    }
+  });
+});
+
+// Живой просмотр логов маршрутизации
+const logsFilter = document.getElementById('logs-filter');
+const logsAutorefresh = document.getElementById('logs-autorefresh');
+const logsRefreshBtn = document.getElementById('logs-refresh');
+const logsStatus = document.getElementById('logs-status');
+const logsList = document.getElementById('logs-list');
+
+let logsEntries = [];
+let logsTimer = null;
+
+function logsBadgeFor(entry) {
+  const m = entry.message;
+  if (m.includes('AMBIGUOUS') || m.includes('NO_MATCH')) return ['badge-ambiguous', m.includes('NO_MATCH') ? 'NO MATCH' : 'НЕОДНОЗНАЧНО'];
+  if (m.startsWith('send:') && m.includes('ok=True')) return ['badge-send-ok', 'ОТПРАВЛЕНО'];
+  if (m.startsWith('send:') && m.includes('ok=False')) return ['badge-send-fail', 'ОШИБКА'];
+  if (m.startsWith('route:')) return ['badge-route', 'МАРШРУТ'];
+  return ['badge-other', entry.logger.replace('hrbot.', '')];
+}
+
+function escapeHtml(s) {
+  return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function renderLogs() {
+  const q = logsFilter.value.trim().toLowerCase();
+  const filtered = q ? logsEntries.filter(e => e.message.toLowerCase().includes(q) || e.logger.toLowerCase().includes(q)) : logsEntries;
+
+  if (!filtered.length) {
+    logsList.innerHTML = `<div class="empty">${logsEntries.length ? 'Ничего не найдено по фильтру.' : 'Логов пока нет — как только кто-то напишет боту, записи появятся здесь.'}</div>`;
+    return;
+  }
+
+  logsList.innerHTML = filtered.map(e => {
+    const [badgeClass, badgeText] = logsBadgeFor(e);
+    const time = e.ts.replace('T', ' ').replace('Z', '').split('.')[0];
+    return `<div class="log-row">
+      <span class="log-ts">${escapeHtml(time)}</span>
+      <span class="log-badge ${badgeClass}">${escapeHtml(badgeText)}</span>
+      <span class="log-logger">${escapeHtml(e.logger.replace('hrbot.', ''))}</span>
+      <span class="log-msg">${escapeHtml(e.message)}</span>
+    </div>`;
+  }).join('');
+}
+
+async function loadLogs() {
+  try {
+    const res = await fetch('/api/admin/logs');
+    if (!res.ok) {
+      let detail = `Ошибка ${res.status}`;
+      try { detail = (await res.json()).detail || detail; } catch (e) {}
+      logsStatus.textContent = detail;
+      logsList.innerHTML = `<div class="empty">${escapeHtml(detail)}</div>`;
+      return;
+    }
+    const data = await res.json();
+    logsEntries = data.logs || [];
+    logsStatus.textContent = `Записей: ${logsEntries.length} · обновлено ${new Date().toLocaleTimeString('ru-RU')}`;
+    renderLogs();
+  } catch (err) {
+    logsStatus.textContent = 'Ошибка соединения';
+  }
+}
+
+function scheduleLogsAutorefresh() {
+  clearInterval(logsTimer);
+  if (logsAutorefresh.checked) {
+    logsTimer = setInterval(loadLogs, 4000);
+  }
+}
+
+logsFilter.addEventListener('input', renderLogs);
+logsRefreshBtn.addEventListener('click', loadLogs);
+logsAutorefresh.addEventListener('change', scheduleLogsAutorefresh);
+
 // Подсказки при вводе (typeahead)
 let typeaheadItems = [];
 let typeaheadActive = -1;
@@ -148,12 +243,13 @@ async function send(text) {
 form.addEventListener('submit', (e) => { e.preventDefault(); send(); });
 
 resetBtn.onclick = async () => {
-  if (sessionId) {
-    await fetch('/api/reset', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({session_id: sessionId})
-    });
-  }
+  const response = await fetch('/api/reset', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({session_id: sessionId})
+  });
+  const data = await response.json();
+  sessionId = data.session_id;
+  localStorage.setItem('dismissal_session_id', sessionId);
   messages.innerHTML = '';
   setSuggestions([]);
   hideTypeahead();
