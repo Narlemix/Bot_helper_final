@@ -25,6 +25,7 @@ class Intent:
     examples: list[str]
     safe_answer: str
     fields: list[Field] = field(default_factory=list)
+    default_applicant_name: str | None = None
     references: list[str] = field(default_factory=list)
 
 

@@ -50,7 +50,8 @@
         "kind": "date",
         "required": true
       }
-    ]
+    ],
+    "default_applicant_name": "Тест Тестов"
   },
   "vahta_dismissal": {
     "name": "Увольнение вахтового сотрудника (вахтовика)",
@@ -103,7 +104,8 @@
         "kind": "date",
         "required": true
       }
-    ]
+    ],
+    "default_applicant_name": "Тест Тестов"
   },
   "vahta_hr_other": {
     "name": "Кадровые операции по вахтовому персоналу (приём, перевод, справки, изменения)",

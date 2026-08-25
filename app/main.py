@@ -26,7 +26,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 FAQ_PATH = BASE_DIR / "data" / "faq.json"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
-APP_VERSION = "3.3.0"
+APP_VERSION = "3.4.0"
 
 classifier = Classifier(FAQ_PATH)
 bot = Bot(classifier)

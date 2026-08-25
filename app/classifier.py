@@ -69,6 +69,7 @@ class Classifier:
                 examples=item["example_questions"],
                 safe_answer=item["safe_answer"],
                 fields=fields,
+                default_applicant_name=item.get("default_applicant_name"),
             )
             intent.references = [*intent.keywords, *intent.examples]
             self.intents[key] = intent

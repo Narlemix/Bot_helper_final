@@ -32,8 +32,14 @@ _SUBMIT_HINTS = ("оформ", "обращ", "отправ", "заявк", "со
 
 
 def build_fields(intent: Intent) -> list[Field]:
-    """Полный список полей темы: заявитель -> поля темы -> комментарий."""
+    """Полный список полей темы для сводки/письма: заявитель -> поля темы -> комментарий."""
     return [*_LEADING_FIELDS, *intent.fields, *_TRAILING_FIELDS]
+
+
+def build_prompt_fields(intent: Intent) -> list[Field]:
+    """Список полей, которые реально нужно спросить (без заявителя, если задано значение по умолчанию)."""
+    leading = [] if intent.default_applicant_name else _LEADING_FIELDS
+    return [*leading, *intent.fields, *_TRAILING_FIELDS]
 
 
 class Bot:
@@ -161,8 +167,8 @@ class Bot:
         if any(hint in lower for hint in _SUBMIT_HINTS):
             session.stage = "collecting"
             session.field_cursor = 0
-            session.values = {}
-            fields = build_fields(intent)
+            session.values = {"full_name": intent.default_applicant_name} if intent.default_applicant_name else {}
+            fields = build_prompt_fields(intent)
             return {"text": fields[0].label, "state": "collecting"}
         return {
             "text": "Выберите вариант: «Получить информацию» или «Оформить обращение».",
@@ -173,7 +179,7 @@ class Bot:
     def _handle_collecting(self, session: Session, message: str, lower: str) -> dict:
         """Стадия «collecting»: последовательно собирает и валидирует поля темы."""
         intent = self.classifier.intents[session.intent]
-        fields = build_fields(intent)
+        fields = build_prompt_fields(intent)
         current = fields[session.field_cursor]
 
         if not current.required and (is_skip(message) or not message.strip()):
